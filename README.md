@@ -26,7 +26,7 @@ VDYO is a web-first AI video editing workspace. Customers create projects, uploa
 
 The renderer is a deterministic first-pass montage renderer, not a full creative AI editor. It does not yet understand scenes visually, rank moments, generate subtitles, select licensed music, add transitions or support image-only projects. The AI Director creates an edit brief from user instructions and file metadata; it does not claim to have watched the footage.
 
-Authentication, per-customer tenant isolation, customer-facing revision history, payments, usage limits, media retention/deletion controls and production deployment still require implementation and configuration. Project APIs remain disabled in production until authentication and tenant authorization are added. Do not expose this development build as a public multi-user service.
+Clerk sign-in/sign-up is integrated in the web client. Express verifies Clerk sessions and scopes project reads/writes to the authenticated Clerk user. Production requires real Clerk keys, MongoDB, Redis, private object storage and an FFmpeg worker. Revision history, payments, usage limits, media retention/deletion controls, audit logs, observability and production deployment still require configuration and implementation.
 
 ## Local development
 
