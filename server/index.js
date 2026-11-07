@@ -12,15 +12,16 @@ import healthRouter from './routes/health.js';
 import projectsRouter from './routes/projects.js';
 
 const app = express();
+const clerkConfigured = Boolean(env.CLERK_PUBLISHABLE_KEY && env.CLERK_SECRET_KEY);
+if (env.NODE_ENV === 'production' && !clerkConfigured) throw new Error('CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY are required in production.');
+if (clerkConfigured) app.use(clerkMiddleware({ publishableKey: env.CLERK_PUBLISHABLE_KEY, secretKey: env.CLERK_SECRET_KEY, authorizedParties: env.WEB_ORIGIN.split(',').map(value => value.trim()) }));
+
 app.disable('x-powered-by');
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ origin: env.WEB_ORIGIN.split(',').map(value => value.trim()), credentials: true }));
 app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-7', legacyHeaders: false }));
 app.use(express.json({ limit: '1mb' }));
 
-const clerkConfigured = Boolean(env.CLERK_PUBLISHABLE_KEY && env.CLERK_SECRET_KEY);
-if (env.NODE_ENV === 'production' && !clerkConfigured) throw new Error('CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY are required in production.');
-if (clerkConfigured) app.use(clerkMiddleware({ publishableKey: env.CLERK_PUBLISHABLE_KEY, secretKey: env.CLERK_SECRET_KEY, authorizedParties: env.WEB_ORIGIN.split(',').map(value => value.trim()) }));
 function requireUser(req, res, next) {
   if (!clerkConfigured) return res.status(503).json({ error: { code: 'AUTH_NOT_CONFIGURED', message: 'Configure Clerk keys to use the project workspace.' } });
   const auth = getAuth(req);
