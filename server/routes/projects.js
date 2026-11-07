@@ -67,7 +67,7 @@ router.post('/:id/uploads', async (req, res) => {
 router.post('/:id/uploads/complete', async (req, res) => {
   const schema = z.object({ key: z.string().min(1) });
   const { key } = schema.parse(req.body);
-  const project = await Project.findById(req.params.id);
+  const project = await Project.findOne(projectFilter(req.params.id, req.userId));
   if (!project) return res.status(404).json({ error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found.' } });
   if (!key.startsWith(`projects/${project.id}/sources/`)) return res.status(403).json({ error: { code: 'INVALID_ASSET_KEY', message: 'Asset key does not belong to this project.' } });
   const asset = project.assets.find(item => item.key === key);
@@ -79,7 +79,7 @@ router.post('/:id/uploads/complete', async (req, res) => {
 });
 
 router.post('/:id/process', async (req, res) => {
-  const project = await Project.findById(req.params.id);
+  const project = await Project.findOne(projectFilter(req.params.id, req.userId));
   if (!project) return res.status(404).json({ error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found.' } });
   if (!project.assets.some(asset => asset.status === 'uploaded' && asset.mimeType.startsWith('video/'))) return res.status(409).json({ error: { code: 'NO_VIDEO_ASSETS', message: 'Upload at least one verified video clip before rendering.' } });
   if (['queued','analysing','editing','rendering','quality_check'].includes(project.status)) return res.status(409).json({ error: { code: 'PROJECT_ALREADY_PROCESSING', message: 'This project is already being processed.' } });
