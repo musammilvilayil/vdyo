@@ -26,7 +26,7 @@ function App() {
 
   const load = useCallback(async () => {
     try {
-      const [projectData, healthData] = await Promise.all([request('/projects'), request('/health/details/')]);
+      const [projectData, healthData] = await Promise.all([request('/projects'), request('/health/')]);
       setProjects(projectData.projects || []);
       setHealth(healthData.dependencies || null);
       setError('');
