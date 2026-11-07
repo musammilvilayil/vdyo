@@ -56,7 +56,7 @@ Vite proxies `/api` to `http://localhost:4000`. Configure MongoDB, Redis and pri
 
 ## API
 
-- `GET /api/health/details/` — API and dependency status.
+- `GET /api/health` — API and dependency status.
 - `POST /api/projects` — create a project.
 - `GET /api/projects` — list projects.
 - `GET /api/projects/:id` — fetch project details.
