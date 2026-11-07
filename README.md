@@ -1,77 +1,93 @@
-# VDYO — WhatsApp-first AI Video Studio
+# VDYO — AI Video Studio
 
-VDYO is a WhatsApp-first video editing studio. Customers request edits in WhatsApp; an AI studio manager collects requirements, organizes footage, coordinates automated editing workflows and returns previews for approval.
+VDYO is a **web-first AI video editing workspace**. Customers create projects, upload raw footage, describe the creative direction and request an AI-generated editing plan. WhatsApp is optional and is not part of the core workflow.
 
-## Product direction
+## Product workflow
 
-- WhatsApp is the primary customer interface.
-- AI handles intake, briefs, status updates and supported repetitive editing tasks.
-- FFmpeg-based processing handles reliable media operations.
-- Human review remains available for creative and quality-critical work.
-- Original customer media is stored privately; WhatsApp messages should carry links or supported media, not act as the long-term asset store.
+1. Create a video project and select format, aspect ratio, duration and style.
+2. Upload source footage, images, logos or audio to private object storage using short-lived signed URLs.
+3. The AI Director turns the brief and available file metadata into a structured editing plan.
+4. A background queue accepts the project for media analysis and rendering.
+5. A video worker performs processing and quality checks before the project can be marked ready.
+6. The customer previews, requests revisions and downloads the final export.
 
 ## Current implementation
 
-- Responsive React/Vite studio dashboard.
-- Overview metrics, recent orders, searchable order list and create-order interaction.
-- WhatsApp inbox preview with local demo conversation.
-- Express API health endpoint.
-- WhatsApp Cloud API webhook verification and event acknowledgement scaffold.
-- Environment variable template.
+- Responsive React/Vite web workspace with project creation, search, status overview and project detail drawer.
+- Express API with health/dependency reporting, validation, rate limiting, security headers and CORS.
+- MongoDB project and asset model.
+- S3-compatible private storage adapter and signed upload/download URL flow.
+- OpenAI-powered structured AI editing brief, with a safe fallback brief when no API key is configured.
+- Redis/BullMQ queue foundation and a separate FFmpeg worker entrypoint.
+- Production guard: project endpoints are disabled in production until authentication and tenant authorization are implemented.
 
-**The dashboard currently uses demo data.** WhatsApp, AI, database, storage, payment and actual video rendering integrations are not connected yet.
+**Important:** this is a development foundation, not a completed autonomous editor. The worker deliberately fails closed until the secure media download, visual analysis, edit-decision-list renderer and output quality-control pipeline are implemented. No finished video is fabricated or marked ready. Authentication, payments, customer-facing preview/revision delivery and production deployment are not yet implemented.
 
-## Run locally
+## Architecture
 
-Requirements: Node.js 20+
+See [docs/architecture.md](docs/architecture.md) for system boundaries, lifecycle, API and security requirements.
+
+## Local development
+
+Requirements:
+- Node.js 20+
+- MongoDB
+- Redis
+- An S3-compatible bucket (Cloudflare R2 or AWS S3) for uploads
+- FFmpeg installed on the worker host
+- OpenAI API key for AI-generated briefs
+
+Install and configure:
 
 ```bash
 npm install
-npm run dev
+cp .env.example .env
 ```
 
-Run the API separately:
+Start the API, web app and worker in separate terminals:
 
 ```bash
-cp .env.example .env
 npm run server
+npm run dev
+npm run worker
 ```
 
-API health: `http://localhost:4000/api/health`
+Vite proxies `/api` to `http://localhost:4000`. Configure MongoDB, Redis and private object storage in `.env`. The API can start without optional services, but project persistence, signed uploads, AI planning and background jobs require their corresponding service credentials.
 
-## Planned architecture
+## API
 
-1. WhatsApp Cloud API — inbound messages, media references and approved outbound templates.
-2. Express API — webhook validation, customer identity and order endpoints.
-3. AI orchestration — intent detection, structured editing brief, clarification and tool selection.
-4. MongoDB — customers, conversations, orders, assets, jobs and audit events.
-5. Private object storage — raw footage, previews and final exports.
-6. FFmpeg workers — trim, concat, crop, resize, normalize audio, subtitles and export.
-7. Human review — approval gates for creative edits and final delivery.
-8. Payment gateway — server-side payment verification and order state transitions.
+- `GET /api/health/details/` — API and dependency status.
+- `POST /api/projects` — create a project.
+- `GET /api/projects` — list projects.
+- `GET /api/projects/:id` — fetch project details.
+- `POST /api/projects/:id/uploads` — request a signed upload URL.
+- `POST /api/projects/:id/uploads/complete` — verify an uploaded object.
+- `POST /api/projects/:id/process` — generate an AI brief and enqueue processing.
 
-## Safety and reliability
-
-- Never expose provider tokens in the browser.
-- Verify WhatsApp webhook signatures before processing production events.
-- Treat incoming text, files and links as untrusted input.
-- Use signed, expiring upload/download URLs for customer media.
-- Verify payment status from gateway webhooks, not screenshots.
-- Keep human approval for edits that cannot be reliably evaluated automatically.
-- Apply a documented retention and deletion policy to customer footage.
+Project routes are available only in development until authentication and per-customer authorization are implemented. Do not deploy this scaffold as a public service.
 
 ## Roadmap
 
-- [x] Initial responsive dashboard and demo order interactions
-- [x] Express health endpoint and WhatsApp webhook scaffold
-- [ ] Persist customers, chats and orders in MongoDB
-- [ ] Connect WhatsApp Cloud API and inbound media handling
-- [ ] Add AI brief generation and conversation state
-- [ ] Add secure upload and asset management
-- [ ] Add FFmpeg job queue and worker
-- [ ] Add preview approval, revisions and delivery
-- [ ] Add payment integration and production observability
+- [x] Replace WhatsApp-first dashboard with web-first studio UI
+- [x] Project model and project management API
+- [x] Signed private media upload foundation
+- [x] Structured AI editing brief
+- [x] Redis/BullMQ job queue foundation
+- [x] Separate FFmpeg worker entrypoint with fail-safe behavior
+- [ ] Customer authentication, sessions and tenant-level authorization
+- [ ] Media probing, thumbnails and scene-level visual understanding
+- [ ] Structured edit decision list (EDL) and deterministic FFmpeg renderer
+- [ ] Automated quality checks and safe retry/recovery
+- [ ] Preview playback, revisions and final delivery
+- [ ] Payments, usage limits, audit logs and media deletion controls
+- [ ] Production CI, monitoring, deployment and load testing
 
-## Important
+## Security notes
 
-This is an early scaffold, not a production-ready autonomous editing service. Real credentials, webhook signature verification, storage, job processing, tests and deployment configuration are still required.
+- Never expose provider credentials in browser code.
+- Keep source media in private buckets; use short-lived signed URLs.
+- Add authentication and tenant authorization before enabling project routes in production.
+- Verify actual uploaded object metadata and content, not only the filename or browser MIME type.
+- Isolate FFmpeg workers and enforce CPU, memory, duration and file-size quotas.
+- Add malware scanning, retention/deletion controls, audit events and backups.
+- Do not mark a project ready until an output file exists and passes automated QC.
