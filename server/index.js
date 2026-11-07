@@ -17,8 +17,7 @@ app.use(cors({ origin: env.WEB_ORIGIN.split(',').map(value => value.trim()), cre
 app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-7', legacyHeaders: false }));
 app.use(express.json({ limit: '1mb' }));
 
-app.get('/api/health', (_req, res) => res.redirect(307, '/api/health/details'));
-app.use('/api/health/details', healthRouter);
+app.use('/api/health', healthRouter);
 // Project routes are development-only until customer authentication and tenant
 // authorization are implemented. Do not expose customer media endpoints publicly.
 if (env.NODE_ENV === 'production') {
