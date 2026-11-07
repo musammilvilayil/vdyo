@@ -7,6 +7,8 @@ const schema = z.object({
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
   MONGODB_URI: z.string().optional(),
   REDIS_URL: z.string().optional(),
+  CLERK_PUBLISHABLE_KEY: z.string().optional(),
+  CLERK_SECRET_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-4.1-mini'),
   OBJECT_STORAGE_ENDPOINT: z.string().url().optional(),

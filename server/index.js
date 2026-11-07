@@ -6,27 +6,32 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { ZodError } from 'zod';
 import { env } from './config/env.js';
+import { clerkMiddleware, getAuth } from '@clerk/express';
 import { connectDatabase } from './db.js';
 import healthRouter from './routes/health.js';
 import projectsRouter from './routes/projects.js';
 
 const app = express();
+const clerkConfigured = Boolean(env.CLERK_PUBLISHABLE_KEY && env.CLERK_SECRET_KEY);
+if (env.NODE_ENV === 'production' && !clerkConfigured) throw new Error('CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY are required in production.');
+if (clerkConfigured) app.use(clerkMiddleware({ publishableKey: env.CLERK_PUBLISHABLE_KEY, secretKey: env.CLERK_SECRET_KEY, authorizedParties: env.WEB_ORIGIN.split(',').map(value => value.trim()) }));
+
 app.disable('x-powered-by');
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ origin: env.WEB_ORIGIN.split(',').map(value => value.trim()), credentials: true }));
 app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-7', legacyHeaders: false }));
 app.use(express.json({ limit: '1mb' }));
 
-app.use('/api/health', healthRouter);
-// Project routes are development-only until customer authentication and tenant
-// authorization are implemented. Do not expose customer media endpoints publicly.
-if (env.NODE_ENV === 'production') {
-  app.use('/api/projects', (_req, res) => res.status(503).json({
-    error: { code: 'AUTHENTICATION_REQUIRED', message: 'Project APIs are disabled in production until authentication and tenant authorization are configured.' }
-  }));
-} else {
-  app.use('/api/projects', projectsRouter);
+function requireUser(req, res, next) {
+  if (!clerkConfigured) return res.status(503).json({ error: { code: 'AUTH_NOT_CONFIGURED', message: 'Configure Clerk keys to use the project workspace.' } });
+  const auth = getAuth(req);
+  if (!auth?.userId) return res.status(401).json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in to access this project.' } });
+  req.userId = auth.userId;
+  next();
 }
+
+app.use('/api/health', healthRouter);
+app.use('/api/projects', requireUser, projectsRouter);
 
 app.use((_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Endpoint not found.' } }));
 app.use((error, _req, res, _next) => {
