@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import { stat } from 'node:fs/promises';
 import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env, hasStorage } from '../config/env.js';
@@ -14,10 +17,10 @@ export function assertStorageReady() {
   if (!client) throw Object.assign(new Error('Private object storage is not configured.'), { status: 503, code: 'STORAGE_NOT_CONFIGURED' });
 }
 
-export async function createUploadUrl({ projectId, fileName, mimeType, size }) {
+export async function createUploadUrl({ projectId, fileName, mimeType }) {
   assertStorageReady();
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-120);
-  const key = `projects/${projectId}/sources/${randomUUID()}-${safeName}`;
+  const key = 'projects/' + projectId + '/sources/' + randomUUID() + '-' + safeName;
   const command = new PutObjectCommand({ Bucket: env.OBJECT_STORAGE_BUCKET, Key: key, ContentType: mimeType });
   const url = await getSignedUrl(client, command, { expiresIn: 600 });
   return { key, url, expiresIn: 600 };
@@ -33,4 +36,22 @@ export async function verifyUploadedObject(key, expectedSize) {
 export async function createDownloadUrl(key, expiresIn = 900) {
   assertStorageReady();
   return getSignedUrl(client, new GetObjectCommand({ Bucket: env.OBJECT_STORAGE_BUCKET, Key: key }), { expiresIn });
+}
+
+export async function downloadObjectToFile(key, destination) {
+  assertStorageReady();
+  const response = await client.send(new GetObjectCommand({ Bucket: env.OBJECT_STORAGE_BUCKET, Key: key }));
+  if (!response.Body) throw new Error('Object storage returned an empty media object.');
+  await pipeline(response.Body, createWriteStream(destination, { flags: 'wx' }));
+  return Number(response.ContentLength || 0);
+}
+
+export async function uploadFile(key, filePath, contentType = 'video/mp4') {
+  assertStorageReady();
+  const file = await stat(filePath);
+  await client.send(new PutObjectCommand({
+    Bucket: env.OBJECT_STORAGE_BUCKET, Key: key, Body: createReadStream(filePath),
+    ContentLength: file.size, ContentType: contentType
+  }));
+  return { size: file.size, key };
 }
