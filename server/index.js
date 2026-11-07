@@ -19,7 +19,15 @@ app.use(express.json({ limit: '1mb' }));
 
 app.get('/api/health', (_req, res) => res.redirect(307, '/api/health/details'));
 app.use('/api/health/details', healthRouter);
-app.use('/api/projects', projectsRouter);
+// Project routes are development-only until customer authentication and tenant
+// authorization are implemented. Do not expose customer media endpoints publicly.
+if (env.NODE_ENV === 'production') {
+  app.use('/api/projects', (_req, res) => res.status(503).json({
+    error: { code: 'AUTHENTICATION_REQUIRED', message: 'Project APIs are disabled in production until authentication and tenant authorization are configured.' }
+  }));
+} else {
+  app.use('/api/projects', projectsRouter);
+}
 
 app.use((_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Endpoint not found.' } }));
 app.use((error, _req, res, _next) => {
