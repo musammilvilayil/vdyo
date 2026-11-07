@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { SignIn, SignUp, UserButton, useAuth, useUser } from '@clerk/react';
 import { Activity, ArrowDownToLine, ArrowUpRight, CheckCircle2, ChevronRight, Clapperboard, CloudUpload, Film, FileVideo2, FolderOpen, Gauge, LoaderCircle, Plus, RefreshCw, Search, Settings2, Sparkles, WandSparkles, X } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -6,14 +7,19 @@ const statusTone = { ready: 'green', failed: 'red', rendering: 'violet', editing
 const pretty = value => (value || 'unknown').replaceAll('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
 const formatDate = value => value ? new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
 
-async function request(path, options = {}) {
-  const response = await fetch(`${API}/api${path}`, { ...options, headers: { ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...options.headers } });
+async function request(path, options = {}, getToken) {
+  const token = getToken ? await getToken() : null;
+  const response = await fetch(`${API}/api${path}`, { ...options, headers: { ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers } });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data?.error?.message || 'Request failed. Check the API configuration.');
   return data;
 }
 
 function App() {
+  const { isLoaded, isSignedIn, getToken } = useAuth();
+  const { user } = useUser();
+  const [authMode, setAuthMode] = useState('sign-in');
+  const api = useCallback((path, options = {}) => request(path, options, getToken), [getToken]);
   const [projects, setProjects] = useState([]);
   const [selected, setSelected] = useState(null);
   const [health, setHealth] = useState(null);
@@ -26,7 +32,7 @@ function App() {
 
   const load = useCallback(async () => {
     try {
-      const [projectData, healthData] = await Promise.all([request('/projects'), request('/health/')]);
+      const [projectData, healthData] = await Promise.all([api('/projects'), api('/health/')]);
       setProjects(projectData.projects || []);
       setHealth(healthData.dependencies || null);
       setError('');
@@ -38,7 +44,7 @@ function App() {
     if (!selected?._id) return;
     const timer = setInterval(async () => {
       try {
-        const data = await request(`/projects/${selected._id}`);
+        const data = await api(`/projects/${selected._id}`);
         setSelected(data.project);
         setProjects(current => current.map(item => item._id === data.project._id ? data.project : item));
       } catch {}
@@ -59,7 +65,7 @@ function App() {
       targetDurationSeconds: Number(form.get('duration')), style: form.get('style'), instructions: form.get('instructions')
     };
     try {
-      const data = await request('/projects', { method: 'POST', body: JSON.stringify(payload) });
+      const data = await api('/projects', { method: 'POST', body: JSON.stringify(payload) });
       setShowCreate(false); setSelected(data.project); setNotice('Project created. Upload source footage to start the AI workflow.'); await load();
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
@@ -70,10 +76,10 @@ function App() {
     setBusy(true); setError(''); setNotice('');
     try {
       for (const file of Array.from(files)) {
-        const intent = await request(`/projects/${selected._id}/uploads`, { method: 'POST', body: JSON.stringify({ fileName: file.name, mimeType: file.type || 'application/octet-stream', size: file.size }) });
+        const intent = await api(`/projects/${selected._id}/uploads`, { method: 'POST', body: JSON.stringify({ fileName: file.name, mimeType: file.type || 'application/octet-stream', size: file.size }) });
         const upload = await fetch(intent.url, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
         if (!upload.ok) throw new Error(`Upload failed for ${file.name}. Check the object-storage CORS policy.`);
-        await request(`/projects/${selected._id}/uploads/complete`, { method: 'POST', body: JSON.stringify({ key: intent.key }) });
+        await api(`/projects/${selected._id}/uploads/complete`, { method: 'POST', body: JSON.stringify({ key: intent.key }) });
       }
       const data = await request(`/projects/${selected._id}`);
       setSelected(data.project); setProjects(current => current.map(item => item._id === data.project._id ? data.project : item));
@@ -86,7 +92,7 @@ function App() {
     if (!selected) return;
     setBusy(true); setError(''); setNotice('');
     try {
-      const data = await request(`/projects/${selected._id}/process`, { method: 'POST', body: JSON.stringify({}) });
+      const data = await api(`/projects/${selected._id}/process`, { method: 'POST', body: JSON.stringify({}) });
       setSelected(data.project); setNotice('AI brief generated and render job queued.');
       await load();
     } catch (err) { setError(err.message); }
@@ -95,10 +101,12 @@ function App() {
 
   async function openProject(project) {
     setSelected(project);
-    try { const data = await request(`/projects/${project._id}`); setSelected(data.project); }
+    try { const data = await api(`/projects/${project._id}`); setSelected(data.project); }
     catch (err) { setError(err.message); }
   }
 
+  if (!isLoaded) return <div className="auth-screen">Loading secure workspace…</div>;
+  if (!isSignedIn) return <div className="auth-screen"><div className="auth-panel"><div className="overline">VDYO STUDIO</div><h1>{authMode === 'sign-in' ? 'Welcome back.' : 'Create your workspace.'}</h1><p>Sign in securely to manage your video projects and private media.</p>{authMode === 'sign-in' ? <SignIn routing="hash" /> : <SignUp routing="hash" />}<button className="text-action" onClick={() => setAuthMode(authMode === 'sign-in' ? 'sign-up' : 'sign-in')}>{authMode === 'sign-in' ? 'Need an account? Sign up' : 'Already have an account? Sign in'}</button></div></div>;
   return <div className="studio-shell">
     <aside className="sidebar">
       <a className="brand" href="#"><span className="brand-icon"><WandSparkles size={19}/></span><span>vdyo<span className="brand-period">.</span></span><small>STUDIO</small></a>
@@ -113,12 +121,12 @@ function App() {
       <div className="sidebar-bottom">
         <div className="privacy-note"><CheckCircle2 size={15}/><span><b>Private by design</b><small>Media is stored in private buckets.</small></span></div>
         <button className="side-link"><Settings2 size={17}/> Settings</button>
-        <div className="user-card"><div className="user-avatar">MM</div><span><b>Studio owner</b><small>Workspace admin</small></span></div>
+        <div className="user-card"><UserButton afterSignOutUrl="/"/><span><b>{user?.fullName || user?.primaryEmailAddress?.emailAddress || 'Workspace user'}</b><small>Authenticated workspace</small></span></div>
       </div>
     </aside>
 
     <main className="main-area">
-      <header className="topbar"><div className="crumb">Workspace <span>/</span> <b>Overview</b></div><div className="topbar-right"><span className={health ? 'api-state online' : 'api-state'}><i/>{health ? 'API reachable' : 'Connecting to API'}</span><button className="round-button" onClick={load} aria-label="Refresh"><RefreshCw size={16}/></button><div className="user-avatar tiny">MM</div></div></header>
+      <header className="topbar"><div className="crumb">Workspace <span>/</span> <b>Overview</b></div><div className="topbar-right"><span className={health ? 'api-state online' : 'api-state'}><i/>{health ? 'API reachable' : 'Connecting to API'}</span><button className="round-button" onClick={load} aria-label="Refresh"><RefreshCw size={16}/></button><UserButton afterSignOutUrl="/"/></div></header>
       <div className="page-content">
         <section className="welcome"><div><div className="overline"><span/> YOUR AI VIDEO WORKSPACE</div><h1>Make every frame <em>count.</em></h1><p>Turn raw footage into publish-ready videos with an intelligent editing workflow.</p></div><button className="primary-btn" onClick={() => setShowCreate(true)}><Plus size={17}/> Create project</button></section>
         {error && <div className="alert error"><span>{error}</span><button onClick={() => setError('')}><X size={15}/></button></div>}
