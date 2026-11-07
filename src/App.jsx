@@ -1,95 +1,163 @@
-import { useMemo, useState } from 'react';
-import { Activity, ArrowDownLeft, ArrowUpRight, AudioLines, Bot, Check, ChevronDown, CircleHelp, Clock3, CloudUpload, Film, Filter, Gauge, ImagePlus, MessageCircle, MoreHorizontal, Play, Plus, Search, Send, Settings2, ShieldCheck, Sparkles, WandSparkles, Workflow, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Activity, ArrowDownToLine, ArrowUpRight, CheckCircle2, ChevronRight, Clapperboard, CloudUpload, Film, FileVideo2, FolderOpen, Gauge, LoaderCircle, Plus, RefreshCw, Search, Settings2, Sparkles, WandSparkles, X } from 'lucide-react';
 
-const initialOrders = [
-  { id: 'VD-1048', name: 'Aarav Nair', type: 'Instagram Reel', detail: 'Restaurant launch · 9:16 · 30 sec', status: 'AI processing', progress: 68, amount: '₹1,499', time: '12 min ago', color: 'violet' },
-  { id: 'VD-1047', name: 'Mira Joseph', type: 'YouTube Short', detail: 'Beauty product · captions + music', status: 'Needs review', progress: 92, amount: '₹999', time: '38 min ago', color: 'orange' },
-  { id: 'VD-1046', name: 'Northstar Realty', type: 'Property Reel', detail: '3 clips · cinematic · 45 sec', status: 'Files received', progress: 24, amount: '₹2,499', time: '1 hr ago', color: 'blue' },
-  { id: 'VD-1045', name: 'Fathima K', type: 'Wedding teaser', detail: 'Highlight edit · 60 sec', status: 'Delivered', progress: 100, amount: '₹4,999', time: 'Yesterday', color: 'green' },
-];
+const API = import.meta.env.VITE_API_URL || '';
+const statusTone = { ready: 'green', failed: 'red', rendering: 'violet', editing: 'violet', analysing: 'violet', queued: 'blue', awaiting_uploads: 'amber', quality_check: 'blue', draft: 'muted' };
+const pretty = value => (value || 'unknown').replaceAll('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
+const formatDate = value => value ? new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
 
-const nav = [
-  { label: 'Overview', icon: Gauge },
-  { label: 'Conversations', icon: MessageCircle, count: '8' },
-  { label: 'Video orders', icon: Film },
-  { label: 'Automations', icon: Workflow },
-];
-
-function Status({ value }) {
-  const cls = value === 'Delivered' ? 'success' : value === 'Needs review' ? 'warning' : value === 'AI processing' ? 'processing' : 'neutral';
-  return <span className={`status ${cls}`}><i />{value}</span>;
+async function request(path, options = {}) {
+  const response = await fetch(`${API}/api${path}`, { ...options, headers: { ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...options.headers } });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.error?.message || 'Request failed. Check the API configuration.');
+  return data;
 }
 
 function App() {
-  const [active, setActive] = useState('Overview');
+  const [projects, setProjects] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [health, setHealth] = useState(null);
   const [query, setQuery] = useState('');
-  const [orders, setOrders] = useState(initialOrders);
-  const [showNew, setShowNew] = useState(false);
-  const [message, setMessage] = useState('');
-  const [chat, setChat] = useState([
-    { from: 'customer', text: 'Hey! I need a 30-second Instagram reel for my new cafe.', time: '2:41 PM' },
-    { from: 'ai', text: 'Absolutely! ☕ I can help with that. Do you have the raw clips ready, and would you like a clean promotional style or a more cinematic edit?', time: '2:41 PM' },
-    { from: 'customer', text: 'Cinematic. I have 5 clips and a logo.', time: '2:42 PM' },
-    { from: 'ai', text: 'Perfect. I’ve prepared a draft brief: 9:16 vertical, 30 seconds, cinematic pacing, logo end-card. Shall I create the order?', time: '2:42 PM' },
-  ]);
-  const filtered = useMemo(() => orders.filter(o => [o.id, o.name, o.type].join(' ').toLowerCase().includes(query.toLowerCase())), [orders, query]);
+  const [showCreate, setShowCreate] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const fileRef = useRef(null);
 
-  function sendMessage(e) {
-    e.preventDefault();
-    if (!message.trim()) return;
-    setChat(c => [...c, { from: 'owner', text: message.trim(), time: 'Now' }]);
-    setMessage('');
+  const load = useCallback(async () => {
+    try {
+      const [projectData, healthData] = await Promise.all([request('/projects'), request('/health/details/')]);
+      setProjects(projectData.projects || []);
+      setHealth(healthData.dependencies || null);
+      setError('');
+    } catch (err) { setError(err.message); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!selected?._id) return;
+    const timer = setInterval(async () => {
+      try {
+        const data = await request(`/projects/${selected._id}`);
+        setSelected(data.project);
+        setProjects(current => current.map(item => item._id === data.project._id ? data.project : item));
+      } catch {}
+    }, 7000);
+    return () => clearInterval(timer);
+  }, [selected?._id]);
+
+  const filtered = useMemo(() => projects.filter(project => [project.title, project.projectCode, project.customer?.name, project.format].join(' ').toLowerCase().includes(query.toLowerCase())), [projects, query]);
+  const activeCount = projects.filter(project => !['ready','failed','cancelled'].includes(project.status)).length;
+  const readyCount = projects.filter(project => project.status === 'ready').length;
+
+  async function createProject(event) {
+    event.preventDefault(); setBusy(true); setError('');
+    const form = new FormData(event.currentTarget);
+    const payload = {
+      customer: { name: form.get('customer'), email: form.get('email') || undefined },
+      title: form.get('title'), format: form.get('format'), aspectRatio: form.get('aspectRatio'),
+      targetDurationSeconds: Number(form.get('duration')), style: form.get('style'), instructions: form.get('instructions')
+    };
+    try {
+      const data = await request('/projects', { method: 'POST', body: JSON.stringify(payload) });
+      setShowCreate(false); setSelected(data.project); setNotice('Project created. Upload source footage to start the AI workflow.'); await load();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
   }
 
-  function createOrder(e) {
-    e.preventDefault();
-    const form = new FormData(e.currentTarget);
-    const name = form.get('customer') || 'New customer';
-    const type = form.get('type') || 'Instagram Reel';
-    setOrders(prev => [{ id: `VD-${1050 + prev.length}`, name, type, detail: 'New request · awaiting footage', status: 'Files received', progress: 10, amount: 'To quote', time: 'Just now', color: 'blue' }, ...prev]);
-    setShowNew(false);
+  async function uploadFiles(files) {
+    if (!selected?._id || !files?.length) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      for (const file of Array.from(files)) {
+        const intent = await request(`/projects/${selected._id}/uploads`, { method: 'POST', body: JSON.stringify({ fileName: file.name, mimeType: file.type || 'application/octet-stream', size: file.size }) });
+        const upload = await fetch(intent.url, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+        if (!upload.ok) throw new Error(`Upload failed for ${file.name}. Check the object-storage CORS policy.`);
+        await request(`/projects/${selected._id}/uploads/complete`, { method: 'POST', body: JSON.stringify({ key: intent.key }) });
+      }
+      const data = await request(`/projects/${selected._id}`);
+      setSelected(data.project); setProjects(current => current.map(item => item._id === data.project._id ? data.project : item));
+      setNotice('Uploads verified. Your source files are ready for processing.');
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
   }
 
-  return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand"><div className="brand-mark"><WandSparkles size={19}/></div><span>vdyo<span className="brand-dot">.</span></span><span className="brand-tag">STUDIO</span></div>
-        <div className="workspace"><div className="workspace-avatar">V</div><div><strong>VDYO Studio</strong><small>Personal workspace</small></div><ChevronDown size={15}/></div>
-        <div className="nav-label">WORKSPACE</div>
-        <nav>{nav.map(item => <button key={item.label} className={active === item.label ? 'nav-item active' : 'nav-item'} onClick={() => setActive(item.label)}><item.icon size={17}/><span>{item.label}</span>{item.count && <b>{item.count}</b>}</button>)}</nav>
-        <div className="nav-label tools-label">STUDIO TOOLS</div>
-        <button className="nav-item" onClick={() => setActive('AI video lab')}><Sparkles size={17}/><span>AI video lab</span><span className="soon">BETA</span></button>
-        <button className="nav-item" onClick={() => setActive('Media library')}><ImagePlus size={17}/><span>Media library</span></button>
-        <button className="nav-item" onClick={() => setActive('Brand kit')}><AudioLines size={17}/><span>Brand kit</span></button>
-        <div className="sidebar-bottom"><div className="usage-card"><div className="usage-top"><span>Monthly renders</span><strong>24 / 100</strong></div><div className="usage-track"><i/></div><small>76 renders remaining</small></div><button className="nav-item"><Settings2 size={17}/><span>Settings</span></button><div className="profile"><div className="profile-avatar">MM</div><div><strong>Musammil</strong><small>Studio owner</small></div><MoreHorizontal size={18}/></div></div>
-      </aside>
+  async function startAI() {
+    if (!selected) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const data = await request(`/projects/${selected._id}/process`, { method: 'POST', body: JSON.stringify({}) });
+      setSelected(data.project); setNotice('AI brief generated and processing job queued.');
+      await load();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
 
-      <main className="main">
-        <header className="topbar"><div className="breadcrumb">Workspace <span>/</span> <strong>{active}</strong></div><div className="top-actions"><span className="connection"><i/> WhatsApp connected</span><button className="icon-button"><CircleHelp size={18}/></button><button className="icon-button"><Settings2 size={18}/></button><div className="profile-avatar small">MM</div></div></header>
-        <div className="content">
-          <section className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-dot"/> YOUR STUDIO AT A GLANCE</div><h1>Good afternoon, Musammil <span>✳</span></h1><p>Here’s what’s happening across your video studio today.</p></div><button className="primary-button" onClick={() => setShowNew(true)}><Plus size={17}/> New order</button></section>
-          <section className="metrics">
-            <Metric icon={MessageCircle} label="WhatsApp conversations" value="128" delta="+18.6%" note="vs last 7 days" color="purple"/>
-            <Metric icon={Film} label="Active video orders" value={orders.filter(o => o.status !== 'Delivered').length.toString().padStart(2,'0')} delta="3 in progress" note="Across all services" color="blue"/>
-            <Metric icon={WandSparkles} label="AI videos generated" value="86" delta="+24.2%" note="vs last 7 days" color="orange"/>
-            <Metric icon={ArrowUpRight} label="Revenue this month" value="₹42,850" delta="+12.8%" note="vs last month" color="green"/>
-          </section>
-          <section className="hero-grid">
-            <div className="hero-card"><div className="hero-copy"><div className="hero-kicker"><Sparkles size={14}/> VDYO AI ASSISTANT</div><h2>Your creative<br/>workflow, on autopilot.</h2><p>Turn WhatsApp requests into ready-to-publish videos. Your AI studio manager handles the busywork while you stay in control.</p><button className="hero-button" onClick={() => setActive('Automations')}>Explore automations <ArrowUpRight size={15}/></button></div><div className="hero-art"><div className="art-orbit orbit-one"/><div className="art-orbit orbit-two"/><div className="art-core"><WandSparkles size={36}/></div><div className="art-chip chip-one"><MessageCircle size={15}/></div><div className="art-chip chip-two"><Film size={15}/></div><div className="art-chip chip-three"><AudioLines size={15}/></div></div></div>
-            <div className="whatsapp-card"><div className="card-heading"><div><span className="live-dot"/> LIVE INBOX</div><button className="text-button" onClick={() => setActive('Conversations')}>View all <ArrowUpRight size={14}/></button></div><div className="chat-person"><div className="chat-avatar">AN</div><div className="chat-person-info"><strong>Aarav Nair</strong><small>+91 •••••• 4821</small></div><span className="chat-time">2:42 PM</span></div><div className="chat-preview">{chat.slice(-2).map((m,i)=><div key={i} className={`bubble ${m.from === 'ai' || m.from === 'owner' ? 'outgoing' : 'incoming'}`}>{m.text}</div>)}</div><form className="chat-compose" onSubmit={sendMessage}><input value={message} onChange={e=>setMessage(e.target.value)} placeholder="Reply as studio owner…"/><button aria-label="Send message"><Send size={15}/></button></form></div>
-          </section>
-          <section className="orders-section"><div className="section-heading"><div><h2>Recent video orders</h2><p>Track every request from WhatsApp to final delivery.</p></div><button className="outline-button" onClick={() => setActive('Video orders')}>All orders <ArrowUpRight size={14}/></button></div>
-            <div className="table-toolbar"><div className="search-box"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search orders or customers"/></div><button className="filter-button"><Filter size={15}/> Filters <ChevronDown size={14}/></button></div>
-            <div className="orders-table"><div className="table-head"><span>ORDER / CUSTOMER</span><span>VIDEO TYPE</span><span>STATUS</span><span>PROGRESS</span><span>AMOUNT</span><span/></div>{filtered.map(order=><div className="table-row" key={order.id}><div className="order-customer"><div className={`order-avatar ${order.color}`}>{order.name.split(' ').map(s=>s[0]).slice(0,2).join('')}</div><div><strong>{order.id}</strong><small>{order.name}</small></div></div><div className="type-cell"><strong>{order.type}</strong><small>{order.detail}</small></div><div><Status value={order.status}/></div><div className="progress-cell"><div className="progress-top"><span>{order.progress}%</span><small>{order.time}</small></div><div className="progress-track"><i style={{width:`${order.progress}%`}}/></div></div><strong className="amount">{order.amount}</strong><button className="row-more"><MoreHorizontal size={18}/></button></div>)}{filtered.length===0&&<div className="empty-state">No matching orders found.</div>}</div>
-          </section>
-          <footer className="footer"><span>VDYO Studio <b>·</b> WhatsApp-first AI video operations</span><span><ShieldCheck size={13}/> Your media stays private</span></footer>
-        </div>
-      </main>
-      {showNew && <div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&setShowNew(false)}><form className="modal" onSubmit={createOrder}><div className="modal-head"><div><span className="eyebrow">STUDIO WORKFLOW</span><h2>Create a video order</h2></div><button type="button" className="icon-button" onClick={()=>setShowNew(false)}><X size={18}/></button></div><label>Customer name<input name="customer" placeholder="e.g. Aisha Rahman" required/></label><label>Video format<select name="type"><option>Instagram Reel</option><option>YouTube Short</option><option>YouTube Video</option><option>Wedding Highlight</option><option>Promotional Video</option></select></label><div className="modal-note"><CloudUpload size={17}/> Customer footage can be collected securely through a WhatsApp upload flow.</div><div className="modal-actions"><button type="button" className="outline-button" onClick={()=>setShowNew(false)}>Cancel</button><button className="primary-button"><Plus size={16}/> Create order</button></div></form></div>}
-    </div>
-  );
+  async function openProject(project) {
+    setSelected(project);
+    try { const data = await request(`/projects/${project._id}`); setSelected(data.project); }
+    catch (err) { setError(err.message); }
+  }
+
+  return <div className="studio-shell">
+    <aside className="sidebar">
+      <a className="brand" href="#"><span className="brand-icon"><WandSparkles size={19}/></span><span>vdyo<span className="brand-period">.</span></span><small>STUDIO</small></a>
+      <div className="workspace-switch"><span className="workspace-avatar">V</span><span><b>VDYO Studio</b><small>AI video workspace</small></span><ChevronRight size={15}/></div>
+      <div className="nav-caption">WORKSPACE</div>
+      <button className="side-link active"><Gauge size={17}/> Overview</button>
+      <button className="side-link" onClick={() => document.getElementById('projects')?.scrollIntoView({ behavior: 'smooth' })}><Film size={17}/> Video projects <span className="side-count">{projects.length}</span></button>
+      <button className="side-link" onClick={() => setShowCreate(true)}><Plus size={17}/> New project</button>
+      <div className="nav-caption tools-caption">AI WORKFLOW</div>
+      <div className="workflow-mini"><span><Sparkles size={15}/></span><div><b>AI Director</b><small>Brief & edit planning</small></div><i className={health?.ai?.configured ? 'on' : ''}/></div>
+      <div className="workflow-mini"><span><Clapperboard size={15}/></span><div><b>Render engine</b><small>FFmpeg worker</small></div><i className="off"/></div>
+      <div className="sidebar-bottom">
+        <div className="privacy-note"><CheckCircle2 size={15}/><span><b>Private by design</b><small>Media is stored in private buckets.</small></span></div>
+        <button className="side-link"><Settings2 size={17}/> Settings</button>
+        <div className="user-card"><div className="user-avatar">MM</div><span><b>Studio owner</b><small>Workspace admin</small></span></div>
+      </div>
+    </aside>
+
+    <main className="main-area">
+      <header className="topbar"><div className="crumb">Workspace <span>/</span> <b>Overview</b></div><div className="topbar-right"><span className={health ? 'api-state online' : 'api-state'}><i/>{health ? 'API reachable' : 'Connecting to API'}</span><button className="round-button" onClick={load} aria-label="Refresh"><RefreshCw size={16}/></button><div className="user-avatar tiny">MM</div></div></header>
+      <div className="page-content">
+        <section className="welcome"><div><div className="overline"><span/> YOUR AI VIDEO WORKSPACE</div><h1>Make every frame <em>count.</em></h1><p>Turn raw footage into publish-ready videos with an intelligent editing workflow.</p></div><button className="primary-btn" onClick={() => setShowCreate(true)}><Plus size={17}/> Create project</button></section>
+        {error && <div className="alert error"><span>{error}</span><button onClick={() => setError('')}><X size={15}/></button></div>}
+        {notice && <div className="alert success"><CheckCircle2 size={16}/><span>{notice}</span><button onClick={() => setNotice('')}><X size={15}/></button></div>}
+        <section className="stat-grid">
+          <Stat icon={Film} label="Total projects" value={projects.length} note="Across your workspace"/>
+          <Stat icon={Activity} label="In progress" value={activeCount} note="Active editing workflows"/>
+          <Stat icon={CheckCircle2} label="Ready to deliver" value={readyCount} note="Quality check completed"/>
+          <Stat icon={Sparkles} label="AI automation" value={health?.ai?.configured ? 'Connected' : 'Setup needed'} note="AI Director availability"/>
+        </section>
+        <section className="hero-panel"><div className="hero-content"><div className="hero-label"><Sparkles size={14}/> INTRODUCING YOUR AI DIRECTOR</div><h2>From raw footage<br/>to a finished story.</h2><p>Describe the video you want. VDYO builds an editing brief, organises your assets and orchestrates the production pipeline.</p><button className="hero-cta" onClick={() => setShowCreate(true)}>Start a new edit <ArrowUpRight size={16}/></button></div><div className="hero-visual"><div className="visual-ring ring-a"/><div className="visual-ring ring-b"/><div className="visual-core"><WandSparkles size={38}/></div><div className="visual-tag tag-top"><FileVideo2 size={14}/> Raw footage</div><div className="visual-tag tag-bottom"><Sparkles size={14}/> AI edit plan</div></div></section>
+
+        <section className="projects-section" id="projects"><div className="section-title"><div><div className="overline">YOUR WORK</div><h2>Video projects</h2><p>Manage source files, AI editing and final exports.</p></div><button className="secondary-btn" onClick={load}><RefreshCw size={14}/> Refresh</button></div>
+          <div className="project-toolbar"><div className="search-field"><Search size={16}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search projects or customers"/></div><span className="result-count">{filtered.length} projects</span></div>
+          <div className="project-list">
+            {filtered.map(project => <button className={selected?._id === project._id ? 'project-row selected' : 'project-row'} key={project._id} onClick={() => openProject(project)}>
+              <div className="project-thumb"><Film size={20}/></div><div className="project-main"><b>{project.title}</b><small>{project.projectCode} · {project.customer?.name || 'Customer'} · {pretty(project.format)}</small></div><div className="project-progress"><div className="progress-line"><i style={{ width: `${project.progress || 0}%` }}/></div><small>{project.progress || 0}%</small></div><span className={`status-pill ${statusTone[project.status] || 'muted'}`}>{pretty(project.status)}</span><span className="project-date">{formatDate(project.updatedAt)}</span><ChevronRight size={16} className="row-chevron"/>
+            </button>)}
+            {!filtered.length && <div className="empty-projects"><FolderOpen size={27}/><b>{projects.length ? 'No matching projects' : 'Your next great edit starts here'}</b><span>{projects.length ? 'Try another search.' : 'Create a project and upload your raw footage to begin.'}</span>{!projects.length && <button className="primary-btn" onClick={() => setShowCreate(true)}><Plus size={16}/> Create your first project</button>}</div>}
+          </div>
+        </section>
+        <footer className="page-footer"><span>VDYO Studio <i>·</i> AI-powered video production</span><span><CheckCircle2 size={13}/> Secure workspace</span></footer>
+      </div>
+    </main>
+
+    {selected && <div className="drawer-backdrop" onMouseDown={event => event.target === event.currentTarget && setSelected(null)}><aside className="project-drawer"><div className="drawer-head"><div><div className="overline">PROJECT DETAILS</div><h2>{selected.title}</h2><small>{selected.projectCode} · {selected.customer?.name}</small></div><button className="round-button" onClick={() => setSelected(null)}><X size={17}/></button></div>
+      <div className="drawer-status"><span className={`status-pill ${statusTone[selected.status] || 'muted'}`}>{pretty(selected.status)}</span><span>{selected.progress || 0}% complete</span></div><div className="large-progress"><i style={{ width: `${selected.progress || 0}%` }}/></div>
+      <div className="drawer-block"><h3>Editing brief</h3><p>{selected.aiBrief?.creativeDirection || selected.instructions || 'Create a project brief and upload footage to let the AI Director plan the edit.'}</p>{selected.aiBrief?.hook && <div className="brief-hook"><b>Opening hook</b><span>{selected.aiBrief.hook}</span></div>}</div>
+      <div className="drawer-block"><div className="block-heading"><h3>Source media</h3><button className="text-action" onClick={() => fileRef.current?.click()}><Plus size={14}/> Add files</button></div><input ref={fileRef} hidden type="file" multiple accept="video/*,image/*,audio/*" onChange={event => uploadFiles(event.target.files)}/>{selected.assets?.length ? selected.assets.map(asset => <div className="asset-row" key={asset._id || asset.key}><FileVideo2 size={17}/><span><b>{asset.originalName}</b><small>{(asset.size / 1024 / 1024).toFixed(1)} MB · {pretty(asset.status)}</small></span>{asset.downloadUrl && <a href={asset.downloadUrl} target="_blank" rel="noreferrer"><ArrowDownToLine size={15}/></a>}</div>) : <button className="upload-zone" onClick={() => fileRef.current?.click()}><CloudUpload size={24}/><b>Upload raw footage</b><small>MP4, MOV, WebM, images or audio</small></button>}</div>
+      <div className="drawer-actions"><button className="secondary-btn full" onClick={() => fileRef.current?.click()}><CloudUpload size={16}/> Upload media</button><button className="primary-btn full" disabled={busy || !selected.assets?.some(asset => asset.status === 'uploaded')} onClick={startAI}>{busy ? <LoaderCircle className="spin" size={16}/> : <WandSparkles size={16}/>} Generate with AI</button></div>
+      {selected.error?.message && <div className="alert error">{selected.error.message}</div>}
+    </aside></div>}
+
+    {showCreate && <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && setShowCreate(false)}><form className="create-modal" onSubmit={createProject}><div className="modal-heading"><div><div className="overline">NEW CREATIVE PROJECT</div><h2>What are we creating?</h2><p>Tell the AI Director what you want to make.</p></div><button type="button" className="round-button" onClick={() => setShowCreate(false)}><X size={17}/></button></div>
+      <div className="form-grid"><label className="wide">Project name<input name="title" placeholder="e.g. Summer cafe launch film" required maxLength="140"/></label><label>Customer name<input name="customer" placeholder="Customer name" required/></label><label>Email (optional)<input name="email" type="email" placeholder="name@example.com"/></label><label>Video type<select name="format"><option value="reel">Instagram Reel</option><option value="short">YouTube Short</option><option value="youtube">YouTube Video</option><option value="wedding">Wedding Highlight</option><option value="promo">Promotional Film</option><option value="custom">Custom</option></select></label><label>Aspect ratio<select name="aspectRatio"><option value="9:16">9:16 · Vertical</option><option value="16:9">16:9 · Landscape</option><option value="1:1">1:1 · Square</option><option value="4:5">4:5 · Portrait</option></select></label><label>Target duration (seconds)<input name="duration" type="number" min="5" max="3600" defaultValue="30"/></label><label>Editing style<input name="style" defaultValue="Cinematic, polished, engaging" maxLength="1000"/></label><label className="wide">Creative instructions<textarea name="instructions" rows="3" placeholder="Describe the story, key moments, pacing, captions, brand details..."/></label></div>
+      <div className="modal-footer"><span><Sparkles size={14}/> AI will turn this brief into an edit plan.</span><button className="primary-btn" disabled={busy}>{busy ? <LoaderCircle className="spin" size={16}/> : <Plus size={16}/>} Create project</button></div>
+    </form></div>}
+  </div>;
 }
 
-function Metric({icon:Icon,label,value,delta,note,color}) { return <div className="metric-card"><div className="metric-top"><span className={`metric-icon ${color}`}><Icon size={17}/></span><span className="metric-delta">{delta}</span></div><div className="metric-value">{value}</div><div className="metric-label">{label}</div><div className="metric-note">{note}</div></div>; }
-
+function Stat({ icon: Icon, label, value, note }) { return <div className="stat-card"><div className="stat-icon"><Icon size={17}/></div><div className="stat-value">{value}</div><div className="stat-label">{label}</div><small>{note}</small></div>; }
 export default App;
