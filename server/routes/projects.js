@@ -24,7 +24,6 @@ const allowedTypes = new Set(process.env.ALLOWED_UPLOAD_TYPES?.split(',') ?? ['v
 
 router.post('/', async (req, res) => {
   const input = createSchema.parse(req.body);
-  const count = await Project.countDocuments();
   const project = await Project.create({ ...input, projectCode: `VD-${String(Date.now()).slice(-7)}`, status: 'awaiting_uploads' });
   res.status(201).json({ project });
 });
@@ -79,13 +78,13 @@ router.post('/:id/process', async (req, res) => {
   const project = await Project.findById(req.params.id);
   if (!project) return res.status(404).json({ error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found.' } });
   if (!project.assets.some(asset => asset.status === 'uploaded')) return res.status(409).json({ error: { code: 'NO_UPLOADED_MEDIA', message: 'Upload at least one source file before processing.' } });
+  const queue = getVideoQueue();
   const brief = await createEditingBrief(project, project.assets.filter(asset => asset.status === 'uploaded'));
   project.aiBrief = brief;
   project.status = 'queued';
   project.progress = 5;
   project.error = undefined;
   await project.save();
-  const queue = getVideoQueue();
   const job = await queue.add('process-project', { projectId: project.id }, { jobId: project.id });
   res.status(202).json({ project, jobId: job.id });
 });
