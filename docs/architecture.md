@@ -51,7 +51,7 @@ Failures move to `failed` with a machine-readable error. Retrying must be idempo
 
 ## Security requirements before production
 
-1. Add authentication and per-user/tenant authorization to every project and asset endpoint.
+1. Clerk session verification and per-user project scoping are implemented; validate the production Clerk instance and authorized origins before launch.
 2. Validate S3 object ownership, metadata and checksums; add malware scanning and media probing.
 3. Add request-size limits, rate limits, MIME sniffing and upload quotas.
 4. Keep all storage private and use short-lived signed URLs.
