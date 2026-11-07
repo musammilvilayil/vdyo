@@ -45,7 +45,8 @@ router.get('/:id', async (req, res) => {
   const assets = await Promise.all((project.assets || []).map(async asset => ({
     ...asset, downloadUrl: asset.status === 'uploaded' ? await createDownloadUrl(asset.key).catch(() => null) : null
   })));
-  res.json({ project: { ...project, assets } });
+  const output = project.output?.key ? { ...project.output, downloadUrl: await createDownloadUrl(project.output.key).catch(() => null) } : project.output;
+  res.json({ project: { ...project, assets, output } });
 });
 
 router.post('/:id/uploads', async (req, res) => {
@@ -77,7 +78,7 @@ router.post('/:id/uploads/complete', async (req, res) => {
 router.post('/:id/process', async (req, res) => {
   const project = await Project.findById(req.params.id);
   if (!project) return res.status(404).json({ error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found.' } });
-  if (!project.assets.some(asset => asset.status === 'uploaded')) return res.status(409).json({ error: { code: 'NO_UPLOADED_MEDIA', message: 'Upload at least one source file before processing.' } });
+  if (!project.assets.some(asset => asset.status === 'uploaded' && asset.mimeType.startsWith('video/'))) return res.status(409).json({ error: { code: 'NO_VIDEO_ASSETS', message: 'Upload at least one verified video clip before rendering.' } });
   const queue = getVideoQueue();
   const brief = await createEditingBrief(project, project.assets.filter(asset => asset.status === 'uploaded'));
   project.aiBrief = brief;
