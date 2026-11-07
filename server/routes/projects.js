@@ -4,10 +4,10 @@ import { Project } from '../models/Project.js';
 import { createUploadUrl, verifyUploadedObject, createDownloadUrl } from '../services/storage.js';
 import { getVideoQueue } from '../queue.js';
 import { createEditingBrief } from '../services/aiDirector.js';
+import { projectFilter, isAssetKeyForProject } from '../security/projectAccess.js';
 
 const router = Router();
 const ownedBy = userId => ({ 'customer.userId': userId });
-const projectFilter = (id, userId) => ({ _id: id, ...ownedBy(userId) });
 const createSchema = z.object({
   customer: z.object({ name: z.string().trim().min(1).max(100), email: z.string().email().optional() }),
   title: z.string().trim().min(2).max(140),
@@ -69,7 +69,7 @@ router.post('/:id/uploads/complete', async (req, res) => {
   const { key } = schema.parse(req.body);
   const project = await Project.findOne(projectFilter(req.params.id, req.userId));
   if (!project) return res.status(404).json({ error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found.' } });
-  if (!key.startsWith(`projects/${project.id}/sources/`)) return res.status(403).json({ error: { code: 'INVALID_ASSET_KEY', message: 'Asset key does not belong to this project.' } });
+  if (!isAssetKeyForProject(key, project.id)) return res.status(403).json({ error: { code: 'INVALID_ASSET_KEY', message: 'Asset key does not belong to this project.' } });
   const asset = project.assets.find(item => item.key === key);
   if (!asset) return res.status(404).json({ error: { code: 'ASSET_NOT_FOUND', message: 'Upload was not registered for this project.' } });
   await verifyUploadedObject(key, asset.size);
