@@ -6,6 +6,8 @@ import { getVideoQueue } from '../queue.js';
 import { createEditingBrief } from '../services/aiDirector.js';
 
 const router = Router();
+const ownedBy = userId => ({ 'customer.userId': userId });
+const projectFilter = (id, userId) => ({ _id: id, ...ownedBy(userId) });
 const createSchema = z.object({
   customer: z.object({ name: z.string().trim().min(1).max(100), email: z.string().email().optional() }),
   title: z.string().trim().min(2).max(140),
@@ -24,14 +26,14 @@ const allowedTypes = new Set(process.env.ALLOWED_UPLOAD_TYPES?.split(',') ?? ['v
 
 router.post('/', async (req, res) => {
   const input = createSchema.parse(req.body);
-  const project = await Project.create({ ...input, projectCode: `VD-${String(Date.now()).slice(-7)}`, status: 'awaiting_uploads' });
+  const project = await Project.create({ ...input, customer: { ...input.customer, userId: req.userId }, projectCode: `VD-${String(Date.now()).slice(-7)}`, status: 'awaiting_uploads' });
   res.status(201).json({ project });
 });
 
 router.get('/', async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
-  const filter = req.query.status ? { status: req.query.status } : {};
+  const filter = { ...ownedBy(req.userId), ...(req.query.status ? { status: req.query.status } : {}) };
   const [projects, total] = await Promise.all([
     Project.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
     Project.countDocuments(filter)
@@ -40,7 +42,7 @@ router.get('/', async (req, res) => {
 });
 
 router.get('/:id', async (req, res) => {
-  const project = await Project.findById(req.params.id).lean();
+  const project = await Project.findOne(projectFilter(req.params.id, req.userId)).lean();
   if (!project) return res.status(404).json({ error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found.' } });
   const assets = await Promise.all((project.assets || []).map(async asset => ({
     ...asset, downloadUrl: asset.status === 'uploaded' ? await createDownloadUrl(asset.key).catch(() => null) : null
@@ -54,7 +56,7 @@ router.post('/:id/uploads', async (req, res) => {
   if (!allowedTypes.has(input.mimeType)) return res.status(415).json({ error: { code: 'UNSUPPORTED_MEDIA_TYPE', message: 'This file type is not allowed.' } });
   const maxBytes = Number(process.env.MAX_UPLOAD_BYTES || 5 * 1024 * 1024 * 1024);
   if (input.size > maxBytes) return res.status(413).json({ error: { code: 'FILE_TOO_LARGE', message: 'File exceeds the configured upload limit.' } });
-  const project = await Project.findById(req.params.id);
+  const project = await Project.findOne(projectFilter(req.params.id, req.userId));
   if (!project) return res.status(404).json({ error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found.' } });
   const signed = await createUploadUrl({ projectId: project.id, ...input });
   project.assets.push({ key: signed.key, originalName: input.fileName, mimeType: input.mimeType, size: input.size, status: 'pending' });
@@ -67,6 +69,7 @@ router.post('/:id/uploads/complete', async (req, res) => {
   const { key } = schema.parse(req.body);
   const project = await Project.findById(req.params.id);
   if (!project) return res.status(404).json({ error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found.' } });
+  if (!key.startsWith(`projects/${project.id}/sources/`)) return res.status(403).json({ error: { code: 'INVALID_ASSET_KEY', message: 'Asset key does not belong to this project.' } });
   const asset = project.assets.find(item => item.key === key);
   if (!asset) return res.status(404).json({ error: { code: 'ASSET_NOT_FOUND', message: 'Upload was not registered for this project.' } });
   await verifyUploadedObject(key, asset.size);
@@ -79,6 +82,7 @@ router.post('/:id/process', async (req, res) => {
   const project = await Project.findById(req.params.id);
   if (!project) return res.status(404).json({ error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found.' } });
   if (!project.assets.some(asset => asset.status === 'uploaded' && asset.mimeType.startsWith('video/'))) return res.status(409).json({ error: { code: 'NO_VIDEO_ASSETS', message: 'Upload at least one verified video clip before rendering.' } });
+  if (['queued','analysing','editing','rendering','quality_check'].includes(project.status)) return res.status(409).json({ error: { code: 'PROJECT_ALREADY_PROCESSING', message: 'This project is already being processed.' } });
   const queue = getVideoQueue();
   const brief = await createEditingBrief(project, project.assets.filter(asset => asset.status === 'uploaded'));
   project.aiBrief = brief;
@@ -86,7 +90,7 @@ router.post('/:id/process', async (req, res) => {
   project.progress = 5;
   project.error = undefined;
   await project.save();
-  const job = await queue.add('process-project', { projectId: project.id }, { jobId: project.id });
+  const job = await queue.add('process-project', { projectId: project.id }, { jobId: `${project.id}-${Date.now()}` });
   res.status(202).json({ project, jobId: job.id });
 });
 
