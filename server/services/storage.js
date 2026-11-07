@@ -18,7 +18,7 @@ export async function createUploadUrl({ projectId, fileName, mimeType, size }) {
   assertStorageReady();
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-120);
   const key = `projects/${projectId}/sources/${randomUUID()}-${safeName}`;
-  const command = new PutObjectCommand({ Bucket: env.OBJECT_STORAGE_BUCKET, Key: key, ContentType: mimeType, ContentLength: size });
+  const command = new PutObjectCommand({ Bucket: env.OBJECT_STORAGE_BUCKET, Key: key, ContentType: mimeType });
   const url = await getSignedUrl(client, command, { expiresIn: 600 });
   return { key, url, expiresIn: 600 };
 }
