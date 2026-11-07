@@ -37,7 +37,7 @@ function App() {
       setHealth(healthData.dependencies || null);
       setError('');
     } catch (err) { setError(err.message); }
-  }, []);
+  }, [api]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -50,7 +50,7 @@ function App() {
       } catch {}
     }, 7000);
     return () => clearInterval(timer);
-  }, [selected?._id]);
+  }, [selected?._id, api]);
 
   const filtered = useMemo(() => projects.filter(project => [project.title, project.projectCode, project.customer?.name, project.format].join(' ').toLowerCase().includes(query.toLowerCase())), [projects, query]);
   const activeCount = projects.filter(project => !['ready','failed','cancelled'].includes(project.status)).length;
@@ -81,7 +81,7 @@ function App() {
         if (!upload.ok) throw new Error(`Upload failed for ${file.name}. Check the object-storage CORS policy.`);
         await api(`/projects/${selected._id}/uploads/complete`, { method: 'POST', body: JSON.stringify({ key: intent.key }) });
       }
-      const data = await request(`/projects/${selected._id}`);
+      const data = await api(`/projects/${selected._id}`);
       setSelected(data.project); setProjects(current => current.map(item => item._id === data.project._id ? data.project : item));
       setNotice('Uploads verified. Your source files are ready for processing.');
     } catch (err) { setError(err.message); }
